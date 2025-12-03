@@ -1163,7 +1163,7 @@ def render_file_editor_tab() -> None:
                     st.session_state.current_directory = (
                         current_dir.rstrip("/") + "/" + name
                     )
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     path = current_dir.rstrip("/") + "/" + name
                     st.session_state.selected_file = path
