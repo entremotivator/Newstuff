@@ -788,7 +788,7 @@ def restore_step_1() -> None:
 
     if st.button("Next", use_container_width=True):
         st.session_state.restore_step = 1
-        st.experimental_rerun()
+        st.rerun()
 
 
 def restore_step_2() -> None:
