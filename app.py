@@ -1074,7 +1074,7 @@ def render_backup_manager_tab() -> None:
                 st.error(f"Failed to create backup: {e}")
     with c3:
         if st.button("Refresh List", use_container_width=True):
-            st.experimental_rerun()
+            st.rerun()
 
     st.divider()
     st.subheader("Existing Backups")
