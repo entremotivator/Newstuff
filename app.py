@@ -1,22 +1,21 @@
 """
 WordPress Management Pro - Ultimate Edition
 Complete WordPress management with 20i API & cPanel support
-Features: Restore, Backup, File Edit, Database, Plugins, Themes, Users, Security, Performance
+Features: Restore, Backup, File Edit, Database, Domains, SSL, Email,
+          Security Scanner, Performance, Migration, Logs & more.
 """
 
 import base64
 import hashlib
 import json
-import os
 import random
 import re
 import string
-import tempfile
 import zipfile
-from datetime import datetime, timedelta
+from datetime import datetime
 from io import BytesIO
-from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import requests
 import streamlit as st
@@ -30,7 +29,6 @@ DEFAULT_DOCROOT_TEMPLATE = "/home/stackcp/{domain}/public_html"
 SPECIAL_CHARS = "!@#$%^&*"
 API_TIMEOUT = 30
 
-# UI Constants
 MAIN_TABS = [
     "Dashboard",
     "Restore",
@@ -40,178 +38,166 @@ MAIN_TABS = [
     "Domain Manager",
     "SSL Manager",
     "Email Manager",
-    "Plugin Manager",
-    "Theme Manager",
-    "User Manager",
-    "WP-CLI Tools",
     "Security Scanner",
     "Performance",
     "Migration Tool",
     "Cron Jobs",
     "Logs Viewer",
     "FTP/SFTP",
-    "Settings"
+    "Settings",
 ]
 
 RESTORE_STEPS = [
-    "Select Package/Domain",
+    "Select Package / Domain",
     "Upload ZIP Backup",
     "Document Root",
     "Database Setup",
-    "Restore Plan"
+    "Restore Plan",
 ]
 
-# File types for syntax highlighting
 FILE_SYNTAX_MAP = {
-    '.php': 'php',
-    '.js': 'javascript',
-    '.css': 'css',
-    '.html': 'html',
-    '.json': 'json',
-    '.xml': 'xml',
-    '.sql': 'sql',
-    '.py': 'python',
-    '.sh': 'bash',
-    '.yml': 'yaml',
-    '.yaml': 'yaml',
-    '.md': 'markdown',
-    '.txt': 'text',
-    '.htaccess': 'apache',
-    '.conf': 'nginx'
+    ".php": "php",
+    ".js": "javascript",
+    ".css": "css",
+    ".html": "html",
+    ".json": "json",
+    ".xml": "xml",
+    ".sql": "sql",
+    ".py": "python",
+    ".sh": "bash",
+    ".yml": "yaml",
+    ".yaml": "yaml",
+    ".md": "markdown",
+    ".txt": "text",
+    ".htaccess": "apache",
+    ".conf": "nginx",
 }
 
-# Security patterns
 SECURITY_PATTERNS = {
-    'malicious_functions': [
-        r'eval\s*\(',
-        r'base64_decode\s*\(',
-        r'system\s*\(',
-        r'exec\s*\(',
-        r'passthru\s*\(',
-        r'shell_exec\s*\(',
-        r'assert\s*\(',
-        r'preg_replace.*\/e',
-        r'create_function\s*\('
+    "malicious_functions": [
+        r"eval\s*\(",
+        r"base64_decode\s*\(",
+        r"system\s*\(",
+        r"exec\s*\(",
+        r"passthru\s*\(",
+        r"shell_exec\s*\(",
+        r"assert\s*\(",
+        r"preg_replace.*\/e",
+        r"create_function\s*\(",
     ],
-    'backdoor_patterns': [
-        r'c99',
-        r'r57',
-        r'shell',
-        r'FilesMan',
-        r'@include.*\$_',
-        r'@require.*\$_'
+    "backdoor_patterns": [
+        r"c99",
+        r"r57",
+        r"FilesMan",
+        r"@include.*\$_",
+        r"@require.*\$_",
     ],
-    'sql_injection': [
-        r'\$_(GET|POST|REQUEST|COOKIE)\[.*\].*\s+(SELECT|INSERT|UPDATE|DELETE)',
-        r'mysql_query.*\$_(GET|POST|REQUEST)'
-    ]
+    "sql_injection": [
+        r"\$_(GET|POST|REQUEST|COOKIE)\[.*\].*\s+(SELECT|INSERT|UPDATE|DELETE)",
+        r"mysql_query.*\$_(GET|POST|REQUEST)",
+    ],
 }
 
 # =========================================================
 # Helper Functions
 # =========================================================
 def b64(s: str) -> str:
-    """Base64 encode UTF-8 string."""
     return base64.b64encode(s.encode("utf-8")).decode("ascii")
 
+
 def b64decode(s: str) -> str:
-    """Base64 decode."""
     return base64.b64decode(s.encode("ascii")).decode("utf-8")
 
+
 def make_20i_bearer(api_key: str) -> str:
-    """Create 20i Bearer token."""
     return f"Bearer {b64(api_key.strip())}"
 
+
 def generate_strong_password(length: int = DEFAULT_PASSWORD_LENGTH) -> str:
-    """Generate cryptographically strong password."""
     chars = string.ascii_letters + string.digits + SPECIAL_CHARS
     password = [
         random.choice(string.ascii_uppercase),
         random.choice(string.ascii_lowercase),
         random.choice(string.digits),
-        random.choice(SPECIAL_CHARS)
+        random.choice(SPECIAL_CHARS),
     ]
     password += [random.choice(chars) for _ in range(length - 4)]
     random.shuffle(password)
     return "".join(password)
 
+
 def normalize_domain_name(name: str) -> str:
-    """Normalize domain to DNS-safe format."""
     name = name.strip().lower()
     name = re.sub(r"[^a-z0-9.-]", "", name)
     name = re.sub(r"-{2,}", "-", name)
     name = re.sub(r"\.{2,}", ".", name)
     return name.strip(".-") or "default-site"
 
+
 def format_timestamp(ts: Optional[str]) -> str:
-    """Format API timestamp for display."""
     if not ts:
         return "N/A"
     try:
-        dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         return dt.strftime("%Y-%m-%d %H:%M")
-    except:
+    except Exception:
         return ts[:16] if ts else "N/A"
 
+
 def format_file_size(size_bytes: int) -> str:
-    """Format file size in human-readable format."""
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
         if size_bytes < 1024.0:
             return f"{size_bytes:.2f} {unit}"
         size_bytes /= 1024.0
     return f"{size_bytes:.2f} PB"
 
+
 def get_file_syntax(filename: str) -> str:
-    """Get syntax highlighting language for file."""
     ext = Path(filename).suffix.lower()
-    return FILE_SYNTAX_MAP.get(ext, 'text')
+    return FILE_SYNTAX_MAP.get(ext, "text")
+
 
 def extract_wp_config_values(content: str) -> Dict[str, str]:
-    """Extract database credentials from wp-config.php."""
     patterns = {
-        'DB_NAME': r"define\s*\(\s*['\"]DB_NAME['\"]\s*,\s*['\"]([^'\"]+)['\"]",
-        'DB_USER': r"define\s*\(\s*['\"]DB_USER['\"]\s*,\s*['\"]([^'\"]+)['\"]",
-        'DB_PASSWORD': r"define\s*\(\s*['\"]DB_PASSWORD['\"]\s*,\s*['\"]([^'\"]+)['\"]",
-        'DB_HOST': r"define\s*\(\s*['\"]DB_HOST['\"]\s*,\s*['\"]([^'\"]+)['\"]"
+        "DB_NAME": r"define\s*\(\s*['\"]DB_NAME['\"]\s*,\s*['\"]([^'\"]+)['\"]",
+        "DB_USER": r"define\s*\(\s*['\"]DB_USER['\"]\s*,\s*['\"]([^'\"]+)['\"]",
+        "DB_PASSWORD": r"define\s*\(\s*['\"]DB_PASSWORD['\"]\s*,\s*['\"]([^'\"]+)['\"]",
+        "DB_HOST": r"define\s*\(\s*['\"]DB_HOST['\"]\s*,\s*['\"]([^'\"]+)['\"]",
     }
-    
-    values = {}
+    values: Dict[str, str] = {}
     for key, pattern in patterns.items():
-        match = re.search(pattern, content)
-        if match:
-            values[key] = match.group(1)
-    
+        m = re.search(pattern, content)
+        if m:
+            values[key] = m.group(1)
     return values
 
+
 def calculate_file_hash(content: str) -> str:
-    """Calculate SHA256 hash of file content."""
     return hashlib.sha256(content.encode()).hexdigest()
 
+
 def scan_file_for_malware(content: str, filename: str) -> List[Dict[str, Any]]:
-    """Scan file content for security issues."""
-    issues = []
-    
+    issues: List[Dict[str, Any]] = []
     for category, patterns in SECURITY_PATTERNS.items():
         for pattern in patterns:
-            matches = re.finditer(pattern, content, re.IGNORECASE)
-            for match in matches:
-                line_num = content[:match.start()].count('\n') + 1
-                issues.append({
-                    'file': filename,
-                    'line': line_num,
-                    'category': category,
-                    'pattern': pattern,
-                    'match': match.group(0)
-                })
-    
+            for match in re.finditer(pattern, content, re.IGNORECASE):
+                line_num = content[: match.start()].count("\n") + 1
+                issues.append(
+                    {
+                        "file": filename,
+                        "line": line_num,
+                        "category": category,
+                        "pattern": pattern,
+                        "match": match.group(0),
+                    }
+                )
     return issues
+
 
 # =========================================================
 # 20i API Client
 # =========================================================
 class TwentyIClient:
-    """Comprehensive 20i API client."""
-    
     def __init__(self, api_key: str, base_url: str = DEFAULT_20I_BASE_URL) -> None:
         self.api_key = api_key.strip()
         self.base_url = base_url.rstrip("/")
@@ -223,8 +209,9 @@ class TwentyIClient:
         self.session = requests.Session()
         self.session.headers.update(self.headers)
 
-    def _request(self, path: str, method: str = "GET", data: Optional[Dict] = None) -> Any:
-        """Execute API request with error handling."""
+    def _request(
+        self, path: str, method: str = "GET", data: Optional[Dict] = None
+    ) -> Any:
         url = f"{self.base_url}{path}"
         try:
             resp = self.session.request(method, url, json=data, timeout=API_TIMEOUT)
@@ -233,7 +220,7 @@ class TwentyIClient:
         except requests.exceptions.RequestException as e:
             raise Exception(f"20i API error [{method} {path}]: {e}")
 
-    # Package Operations
+    # Packages
     def list_packages(self) -> Dict[str, Any]:
         raw = self._request("/package")
         return {"packages": raw} if isinstance(raw, list) else raw
@@ -244,58 +231,88 @@ class TwentyIClient:
     def get_package_resources(self, pkg_id: str) -> Dict[str, Any]:
         return self._request(f"/package/{pkg_id}/resources")
 
-    # Domain Operations
+    # Domains
     def list_domains(self) -> Dict[str, Any]:
         raw = self._request("/domain")
         return {"domains": raw} if isinstance(raw, list) else raw
 
-    def add_domain_to_package(self, pkg_id: str, domain: str, docroot: str = "") -> Dict[str, Any]:
-        payload = {"domain_name": domain, "document_root": docroot or f"/home/stackcp/{domain}/public_html"}
+    def add_domain_to_package(
+        self, pkg_id: str, domain: str, docroot: str = ""
+    ) -> Dict[str, Any]:
+        payload = {
+            "domain_name": domain,
+            "document_root": docroot or f"/home/stackcp/{domain}/public_html",
+        }
         return self._request(f"/package/{pkg_id}/addDomain", "POST", payload)
 
     def remove_domain_from_package(self, pkg_id: str, domain: str) -> Dict[str, Any]:
-        return self._request(f"/package/{pkg_id}/removeDomain", "POST", {"domain_name": domain})
+        return self._request(
+            f"/package/{pkg_id}/removeDomain", "POST", {"domain_name": domain}
+        )
 
-    # Database Operations
+    # Databases
     def list_databases(self, pkg_id: str) -> Dict[str, Any]:
         return self._request(f"/package/{pkg_id}/databases")
 
     def create_database(self, pkg_id: str, db_name: str) -> Dict[str, Any]:
-        return self._request(f"/package/{pkg_id}/database", "POST", {"database_name": db_name})
+        return self._request(
+            f"/package/{pkg_id}/database", "POST", {"database_name": db_name}
+        )
 
     def delete_database(self, pkg_id: str, db_name: str) -> Dict[str, Any]:
         return self._request(f"/package/{pkg_id}/database/{db_name}", "DELETE")
 
-    def create_database_user(self, pkg_id: str, username: str, password: str) -> Dict[str, Any]:
-        return self._request(f"/package/{pkg_id}/databaseUser", "POST", {"username": username, "password": password})
+    def create_database_user(
+        self, pkg_id: str, username: str, password: str
+    ) -> Dict[str, Any]:
+        return self._request(
+            f"/package/{pkg_id}/databaseUser",
+            "POST",
+            {"username": username, "password": password},
+        )
 
-    def grant_database_access(self, pkg_id: str, db_name: str, username: str) -> Dict[str, Any]:
-        payload = {"database_name": db_name, "username": username}
-        return self._request(f"/package/{pkg_id}/databaseAccess", "POST", payload)
+    def grant_database_access(
+        self, pkg_id: str, db_name: str, username: str
+    ) -> Dict[str, Any]:
+        return self._request(
+            f"/package/{pkg_id}/databaseAccess",
+            "POST",
+            {"database_name": db_name, "username": username},
+        )
 
-    # SSL Operations
+    # SSL
     def list_ssl_certificates(self, pkg_id: str) -> Dict[str, Any]:
         return self._request(f"/package/{pkg_id}/ssl")
 
     def install_free_ssl(self, pkg_id: str, domain: str) -> Dict[str, Any]:
-        return self._request(f"/package/{pkg_id}/ssl/free", "POST", {"domain": domain})
+        return self._request(
+            f"/package/{pkg_id}/ssl/free", "POST", {"domain": domain}
+        )
 
-    # Email Operations
+    # Email
     def list_email_accounts(self, pkg_id: str) -> Dict[str, Any]:
         return self._request(f"/package/{pkg_id}/email")
 
-    def create_email_account(self, pkg_id: str, email: str, password: str, quota_mb: int = 1000) -> Dict[str, Any]:
-        return self._request(f"/package/{pkg_id}/email", "POST", {"email": email, "password": password, "quota": quota_mb})
+    def create_email_account(
+        self, pkg_id: str, email: str, password: str, quota_mb: int = 1000
+    ) -> Dict[str, Any]:
+        return self._request(
+            f"/package/{pkg_id}/email",
+            "POST",
+            {"email": email, "password": password, "quota": quota_mb},
+        )
 
     def delete_email_account(self, pkg_id: str, email: str) -> Dict[str, Any]:
         return self._request(f"/package/{pkg_id}/email/{email}", "DELETE")
 
-    # Backup Operations
+    # Backups
     def list_backups(self, pkg_id: str) -> Dict[str, Any]:
         return self._request(f"/package/{pkg_id}/backups")
 
     def create_backup(self, pkg_id: str, backup_name: str) -> Dict[str, Any]:
-        return self._request(f"/package/{pkg_id}/backup", "POST", {"name": backup_name})
+        return self._request(
+            f"/package/{pkg_id}/backup", "POST", {"name": backup_name}
+        )
 
     def download_backup(self, pkg_id: str, backup_id: str) -> bytes:
         url = f"{self.base_url}/package/{pkg_id}/backup/{backup_id}/download"
@@ -304,12 +321,14 @@ class TwentyIClient:
         return resp.content
 
     def restore_backup(self, pkg_id: str, backup_id: str) -> Dict[str, Any]:
-        return self._request(f"/package/{pkg_id}/backup/{backup_id}/restore", "POST")
+        return self._request(
+            f"/package/{pkg_id}/backup/{backup_id}/restore", "POST"
+        )
 
     # Utility
     @staticmethod
     def build_domain_choices(raw: Dict[str, Any]) -> List[Dict[str, Any]]:
-        choices = []
+        choices: List[Dict[str, Any]] = []
         for pkg in raw.get("packages", []):
             if not isinstance(pkg, dict):
                 continue
@@ -317,169 +336,183 @@ class TwentyIClient:
             pkg_name = pkg.get("label", f"Package {pkg_id}")
             for domain in pkg.get("names", []):
                 if isinstance(domain, str):
-                    choices.append({
-                        "label": f"{domain} ({pkg_name})",
-                        "domain": domain,
-                        "package_id": pkg_id,
-                        "package_label": pkg_name
-                    })
+                    choices.append(
+                        {
+                            "label": f"{domain} ({pkg_name})",
+                            "domain": domain,
+                            "package_id": pkg_id,
+                            "package_label": pkg_name,
+                        }
+                    )
         return sorted(choices, key=lambda c: c["domain"])
 
     def get_account_info(self) -> Dict[str, Any]:
-        # Use a more general endpoint for account info. /reseller/info is often restricted.
         return self._request("/account")
 
+
 # =========================================================
-# cPanel API Client - Fixed and Enhanced
+# cPanel API Client
 # =========================================================
 class CPanelClient:
-    """cPanel UAPI client with proper URL construction."""
-    
-    def __init__(self, cpanel_url: str, username: str, password: str = "", api_token: str = "") -> None:
-        # Clean and normalize URL
+    def __init__(
+        self, cpanel_url: str, username: str, password: str = "", api_token: str = ""
+    ) -> None:
         self.cpanel_url = cpanel_url.rstrip("/")
-        
-        # Ensure we have a proper base URL
-        if not self.cpanel_url.startswith(('http://', 'https://')):
+        if not self.cpanel_url.startswith(("http://", "https://")):
             self.cpanel_url = f"https://{self.cpanel_url}"
-        
-        # Remove any trailing paths and ensure we're at the root
-        parsed_parts = self.cpanel_url.split('/')
-        if len(parsed_parts) > 3:
-            self.cpanel_url = '/'.join(parsed_parts[:3])
-        
-        # Add port if not present
-        if ':2083' not in self.cpanel_url and ':2082' not in self.cpanel_url:
-            self.cpanel_url = self.cpanel_url.replace('https://', 'https://').rstrip('/') + ':2083'
-        
+
+        parts = self.cpanel_url.split("/")
+        if len(parts) > 3:
+            self.cpanel_url = "/".join(parts[:3])
+
+        if ":2083" not in self.cpanel_url and ":2082" not in self.cpanel_url:
+            self.cpanel_url = self.cpanel_url.rstrip("/") + ":2083"
+
         self.username = username
         self.password = password
         self.api_token = api_token
-        
-        # Setup authentication
+
         if api_token:
             self.headers = {
                 "Authorization": f"cpanel {username}:{api_token}",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             }
             self.auth = None
         else:
             self.headers = {"Content-Type": "application/json"}
             self.auth = (username, password)
-        
+
         self.session = requests.Session()
         self.session.headers.update(self.headers)
 
-    def _request(self, module: str, function: str, params: Dict = None, api_version: str = "uapi") -> Any:
-        """Execute cPanel API request with proper URL formatting."""
-        # Build URL properly for UAPI
+    def _request(self, module: str, function: str, params: Dict = None) -> Any:
         url = f"{self.cpanel_url}/execute/{module}/{function}"
-        
         try:
-            # Disable SSL verification for cPanel connections as they often use self-signed certs
-            resp = self.session.get(url, params=params or {}, auth=self.auth, timeout=API_TIMEOUT, verify=False)
+            resp = self.session.get(
+                url,
+                params=params or {},
+                auth=self.auth,
+                timeout=API_TIMEOUT,
+                verify=False,  # self-signed common
+            )
             resp.raise_for_status()
-            result = resp.json()
-            
-            # Check for cPanel-specific errors
-            if isinstance(result, dict):
-                # UAPI response structure check
-                if result.get("status") == 0:
-                    error_msg = result.get("errors", ["Unknown error"])[0] if result.get("errors") else "API request failed"
-                    raise Exception(f"cPanel API error: {error_msg}")
-            
-            return result
+            data = resp.json()
+            if isinstance(data, dict) and data.get("status") == 0:
+                msg = data.get("errors", ["Unknown error"])[0]
+                raise Exception(f"cPanel API error: {msg}")
+            return data
         except requests.exceptions.RequestException as e:
             raise Exception(f"cPanel API request failed: {e}")
 
-    # Domain Operations
+    # Domains
     def list_domains(self) -> List[str]:
         result = self._request("DomainInfo", "list_domains")
         if result.get("status") == 1:
-            return [d.get("domain") for d in result.get("data", []) if isinstance(d, dict) and d.get("domain")]
+            return [
+                d.get("domain")
+                for d in result.get("data", [])
+                if isinstance(d, dict) and d.get("domain")
+            ]
         return []
 
-    def add_addon_domain(self, domain: str, subdomain: str, docroot: str) -> Dict[str, Any]:
-        params = {"domain": domain, "subdomain": subdomain, "dir": docroot}
-        return self._request("AddonDomain", "addaddondomain", params)
+    def add_addon_domain(self, domain: str, subdomain: str, docroot: str) -> Dict:
+        return self._request(
+            "AddonDomain",
+            "addaddondomain",
+            {"domain": domain, "subdomain": subdomain, "dir": docroot},
+        )
 
-    def remove_addon_domain(self, domain: str) -> Dict[str, Any]:
+    def remove_addon_domain(self, domain: str) -> Dict:
         return self._request("AddonDomain", "deladdondomain", {"domain": domain})
 
-    # Database Operations
+    # Databases
     def list_databases(self) -> List[str]:
         result = self._request("Mysql", "list_databases")
         if result.get("status") == 1:
-            return [db.get("database") for db in result.get("data", []) if isinstance(db, dict)]
+            return [db.get("database") for db in result.get("data", []) if db]
         return []
 
-    def create_database(self, db_name: str) -> Dict[str, Any]:
-        return self._request("Mysql", "create_database", {"name": db_name})
+    def create_database(self, name: str) -> Dict:
+        return self._request("Mysql", "create_database", {"name": name})
 
-    def delete_database(self, db_name: str) -> Dict[str, Any]:
-        return self._request("Mysql", "delete_database", {"name": db_name})
+    def delete_database(self, name: str) -> Dict:
+        return self._request("Mysql", "delete_database", {"name": name})
 
-    def create_database_user(self, username: str, password: str) -> Dict[str, Any]:
-        return self._request("Mysql", "create_user", {"name": username, "password": password})
+    def create_database_user(self, username: str, password: str) -> Dict:
+        return self._request(
+            "Mysql", "create_user", {"name": username, "password": password}
+        )
 
-    def grant_database_privileges(self, user: str, database: str) -> Dict[str, Any]:
-        params = {"user": user, "database": database, "privileges": "ALL PRIVILEGES"}
-        return self._request("Mysql", "set_privileges_on_database", params)
+    def grant_database_privileges(self, user: str, db: str) -> Dict:
+        return self._request(
+            "Mysql",
+            "set_privileges_on_database",
+            {"user": user, "database": db, "privileges": "ALL PRIVILEGES"},
+        )
 
-    # File Operations
+    # Files
     def list_files(self, directory: str = "/public_html") -> List[Dict[str, Any]]:
         result = self._request("Fileman", "list_files", {"dir": directory})
         if result.get("status") == 1:
             return result.get("data", [])
         return []
 
-    def read_file(self, filepath: str) -> str:
-        """Read file content using Fileman UAPI."""
-        result = self._request("Fileman", "get_file_content", {"path": filepath})
+    def read_file(self, path: str) -> str:
+        result = self._request("Fileman", "get_file_content", {"path": path})
         if result.get("status") == 1:
-            # cPanel UAPI returns content in 'data' field for this call
             return result.get("data", {}).get("content", "")
         return ""
 
-    def write_file(self, filepath: str, content: str) -> Dict[str, Any]:
-        """Write file content using Fileman UAPI."""
-        # Note: cPanel UAPI expects 'dir' for the path and 'content' for the file content
-        return self._request("Fileman", "save_file_content", {"path": filepath, "content": content})
+    def write_file(self, path: str, content: str) -> Dict:
+        return self._request(
+            "Fileman", "save_file_content", {"path": path, "content": content}
+        )
 
-    def delete_file(self, filepath: str) -> Dict[str, Any]:
-        return self._request("Fileman", "delete_files", {"files": filepath})
+    def delete_file(self, path: str) -> Dict:
+        return self._request("Fileman", "delete_files", {"files": path})
 
-    # SSL Operations
+    # SSL
     def list_ssl_certificates(self) -> List[Dict[str, Any]]:
         result = self._request("SSL", "list_certs")
         if result.get("status") == 1:
             return result.get("data", [])
         return []
 
-    def install_ssl_certificate(self, domain: str, cert: str, key: str, cabundle: str = "") -> Dict[str, Any]:
+    def install_ssl_certificate(
+        self, domain: str, cert: str, key: str, cabundle: str = ""
+    ) -> Dict:
         params = {"domain": domain, "cert": cert, "key": key}
         if cabundle:
             params["cabundle"] = cabundle
         return self._request("SSL", "install_ssl", params)
 
-    # Email Operations
+    # Email
     def list_email_accounts(self) -> List[Dict[str, Any]]:
         result = self._request("Email", "list_pops")
         if result.get("status") == 1:
             return result.get("data", [])
         return []
 
-    def create_email_account(self, email: str, password: str, quota: int = 250) -> Dict[str, Any]:
-        domain = email.split("@")[1]
-        localpart = email.split("@")[0]
-        params = {"email": localpart, "password": password, "quota": quota, "domain": domain}
+    def create_email_account(
+        self, email: str, password: str, quota: int = 250
+    ) -> Dict:
+        local, domain = email.split("@", 1)
+        params = {
+            "email": local,
+            "domain": domain,
+            "password": password,
+            "quota": quota,
+        }
         return self._request("Email", "add_pop", params)
 
-    def delete_email_account(self, email: str) -> Dict[str, Any]:
-        return self._request("Email", "delete_pop", {"email": email})
+    def delete_email_account(self, email: str) -> Dict:
+        local, domain = email.split("@", 1)
+        return self._request(
+            "Email", "delete_pop", {"email": local, "domain": domain}
+        )
 
-    # Backup Operations
-    def create_backup(self) -> Dict[str, Any]:
+    # Backups
+    def create_backup(self) -> Dict:
         return self._request("Backup", "fullbackup_to_homedir")
 
     def list_backups(self) -> List[Dict[str, Any]]:
@@ -488,419 +521,370 @@ class CPanelClient:
             return result.get("data", [])
         return []
 
+
 # =========================================================
 # Session State Management
 # =========================================================
 def init_session_state() -> None:
-    """Initialize all session state variables."""
     defaults = {
-        # API Clients
         "api_type": "20i",
         "twentyi_client": None,
         "cpanel_client": None,
         "connected": False,
-        
-        # Account Data
         "account_info": None,
         "packages_raw": None,
         "domain_choices": [],
         "selected_package": None,
         "selected_domain": "",
         "all_domains": [],
-        
-        # Restore State
+        # Restore
         "docroot": "",
         "upload_filename": "",
         "uploaded_zip": None,
         "db_details": {},
         "restore_step": 0,
-        
-        # File Manager
+        # File manager
         "current_directory": "/public_html",
         "file_list": [],
         "selected_file": None,
         "file_content": "",
-        "file_edited": False,
-        
-        # Database Manager
+        # DB manager
         "db_list": [],
-        "selected_db": None,
-        "sql_query": "",
-        "query_result": None,
-        
-        # Plugin Manager
-        "plugin_list": [],
-        "available_plugins": [],
-        
-        # Theme Manager
-        "theme_list": [],
-        "active_theme": None,
-        
-        # User Manager
-        "wp_users": [],
-        
-        # Security Scanner
+        # Security
         "scan_results": [],
         "last_scan": None,
-        
-        # Performance
-        "perf_metrics": {},
-        
-        # UI State
+        # Backups
+        "backup_list": [],
+        # UI
         "current_tab": 0,
         "debug_mode": False,
         "last_error": None,
     }
-    
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
+
 def get_client():
-    """Get the active API client."""
-    if st.session_state.api_type == "20i":
-        return st.session_state.twentyi_client
-    return st.session_state.cpanel_client
+    return (
+        st.session_state.twentyi_client
+        if st.session_state.api_type == "20i"
+        else st.session_state.cpanel_client
+    )
+
 
 # =========================================================
-# Sidebar - Enhanced Authentication
+# Sidebar: API Connection
 # =========================================================
 def render_sidebar() -> None:
-    """Enhanced sidebar with dual API support."""
     st.header("API Connection")
-    
-    # API Type Selection
-    api_type = st.radio(
+
+    api_type_choice = st.radio(
         "Select API Type",
         ["20i", "cPanel"],
         horizontal=True,
-        key="api_type_select"
     )
-    st.session_state.api_type = api_type.lower()
-    
+    st.session_state.api_type = "20i" if api_type_choice == "20i" else "cpanel"
+
     st.divider()
-    
-    if api_type == "20i":
+    if api_type_choice == "20i":
         render_20i_auth()
     else:
         render_cpanel_auth()
-    
-    # Connection Status
+
     if st.session_state.connected:
         st.success("Connected")
         if st.session_state.account_info:
             with st.expander("Account Info"):
                 st.json(st.session_state.account_info)
-    
-    # Debug Mode
+
     st.divider()
-    st.session_state.debug_mode = st.checkbox("Debug Mode", value=st.session_state.debug_mode)
+    st.session_state.debug_mode = st.checkbox(
+        "Debug Mode", value=st.session_state.debug_mode
+    )
+
 
 def render_20i_auth() -> None:
-    """20i API authentication form."""
     st.subheader("20i API")
-    
-    api_key = st.text_input("General API Key", type="password", key="20i_api_key")
-    
+    api_key = st.text_input("20i General API Key", type="password")
+
     if st.button("Connect to 20i", use_container_width=True):
         if not api_key:
-            st.error("Enter your 20i API key")
+            st.error("Please enter your 20i API key.")
             return
-        
         try:
-            with st.spinner("Connecting..."):
+            with st.spinner("Connecting to 20i..."):
                 client = TwentyIClient(api_key)
                 st.session_state.twentyi_client = client
-                
-                # Fetch data
                 st.session_state.packages_raw = client.list_packages()
-                st.session_state.domain_choices = client.build_domain_choices(st.session_state.packages_raw)
-                
+                st.session_state.domain_choices = TwentyIClient.build_domain_choices(
+                    st.session_state.packages_raw
+                )
                 try:
                     st.session_state.account_info = client.get_account_info()
-                except Exception as info_e:
-                    st.warning(f"Could not fetch account info: {info_e}")
-                    st.session_state.account_info = {"error": str(info_e)}
-                    
+                except Exception as e:
+                    st.warning(f"Could not fetch account info: {e}")
+                    st.session_state.account_info = {"error": str(e)}
                 st.session_state.connected = True
-                
-                st.success(f"Connected! Found {len(st.session_state.domain_choices)} sites")
+                st.success(
+                    f"Connected to 20i. Found {len(st.session_state.domain_choices)} sites."
+                )
                 st.rerun()
         except Exception as e:
             st.error(f"Connection failed: {e}")
             st.session_state.connected = False
 
+
 def render_cpanel_auth() -> None:
-    """cPanel API authentication form."""
     st.subheader("cPanel API")
-    
-    cpanel_url = st.text_input("cPanel URL", placeholder="https://yourdomain.com:2083", key="cpanel_url")
-    username = st.text_input("Username", key="cpanel_username")
-    
+
+    cpanel_url = st.text_input("cPanel URL", placeholder="https://yourdomain.com:2083")
+    username = st.text_input("Username")
     auth_method = st.radio("Auth Method", ["Password", "API Token"], horizontal=True)
-    
+
     if auth_method == "Password":
-        password = st.text_input("Password", type="password", key="cpanel_password")
+        password = st.text_input("Password", type="password")
         api_token = ""
     else:
         password = ""
-        api_token = st.text_input("API Token", type="password", key="cpanel_api_token")
-    
+        api_token = st.text_input("API Token", type="password")
+
     if st.button("Connect to cPanel", use_container_width=True):
-        if not all([cpanel_url, username]) or not (password or api_token):
-            st.error("Fill in all required fields")
+        if not cpanel_url or not username or not (password or api_token):
+            st.error("Please fill in all required fields.")
             return
-        
         try:
-            with st.spinner("Connecting..."):
+            with st.spinner("Connecting to cPanel..."):
                 client = CPanelClient(cpanel_url, username, password, api_token)
                 st.session_state.cpanel_client = client
-                
-                # Test connection
-                domains = client.list_domains()
-                st.session_state.all_domains = domains
+                st.session_state.all_domains = client.list_domains()
+                st.session_state.account_info = {
+                    "username": username,
+                    "cpanel_url": cpanel_url,
+                    "domains_found": len(st.session_state.all_domains),
+                }
                 st.session_state.connected = True
-                
-                st.success(f"Connected! Found {len(domains)} domains")
+                st.success(
+                    f"Connected to cPanel. Found {len(st.session_state.all_domains)} domains."
+                )
                 st.rerun()
         except Exception as e:
             st.error(f"Connection failed: {e}")
             st.session_state.connected = False
 
+
 # =========================================================
-# Tab 1: Dashboard
+# Tab: Dashboard
 # =========================================================
 def render_dashboard_tab() -> None:
-    """Enhanced dashboard with overview and quick stats."""
     st.header("Dashboard")
-    
+
     if not st.session_state.connected:
-        st.info("Connect via sidebar to see your dashboard")
+        st.info("Connect via the sidebar to see your dashboard overview.")
         return
-    
-    # Quick Stats
+
     col1, col2, col3, col4 = st.columns(4)
-    
     with col1:
-        st.metric("Total Sites", len(st.session_state.domain_choices or st.session_state.all_domains))
-    
+        total_sites = (
+            len(st.session_state.domain_choices)
+            if st.session_state.api_type == "20i"
+            else len(st.session_state.all_domains)
+        )
+        st.metric("Total Sites", total_sites)
+
     with col2:
         st.metric("Databases", len(st.session_state.db_list))
-    
+
     with col3:
-        st.metric("Backups", len(st.session_state.get("backup_list", [])))
-    
+        st.metric("Backups", len(st.session_state.backup_list))
+
     with col4:
-        security_issues = len(st.session_state.scan_results)
-        st.metric("Security Issues", security_issues, delta=f"-{security_issues}" if security_issues > 0 else None)
-    
+        issues = len(st.session_state.scan_results)
+        st.metric("Security Issues", issues)
+
     st.divider()
-    
-    # Recent Activity
-    st.subheader("Recent Activity")
-    
-    activities = [
-        {"time": "2 hours ago", "action": "Backup created", "target": st.session_state.selected_domain or "N/A"},
-        {"time": "5 hours ago", "action": "SSL renewed", "target": st.session_state.selected_domain or "N/A"},
-        {"time": "1 day ago", "action": "Plugin updated", "target": "WooCommerce"},
-    ]
-    
-    for activity in activities:
-        col_time, col_action, col_target = st.columns([1, 2, 2])
-        with col_time:
-            st.caption(activity["time"])
-        with col_action:
-            st.write(activity["action"])
-        with col_target:
-            st.write(activity["target"])
-    
-    st.divider()
-    
-    # Quick Actions
     st.subheader("Quick Actions")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("Create Backup", use_container_width=True):
-            st.session_state.current_tab = 2
-            st.rerun()
-    
-    with col2:
-        if st.button("Scan Security", use_container_width=True):
-            st.session_state.current_tab = 12
-            st.rerun()
-    
-    with col3:
-        if st.button("Manage Files", use_container_width=True):
-            st.session_state.current_tab = 3
-            st.rerun()
+
+    qc1, qc2, qc3 = st.columns(3)
+    with qc1:
+        if st.button("New Backup", use_container_width=True):
+            st.session_state.current_tab = MAIN_TABS.index("Backup Manager")
+            st.experimental_rerun()
+    with qc2:
+        if st.button("Restore Wizard", use_container_width=True):
+            st.session_state.current_tab = MAIN_TABS.index("Restore")
+            st.experimental_rerun()
+    with qc3:
+        if st.button("Security Scan", use_container_width=True):
+            st.session_state.current_tab = MAIN_TABS.index("Security Scanner")
+            st.experimental_rerun()
+
 
 # =========================================================
-# Tab 2: Restore
+# Tab: Restore Wizard
 # =========================================================
 def render_restore_tab() -> None:
-    """Multi-step restore wizard."""
     st.header("WordPress Restore Wizard")
-    
-    if not st.session_state.connected:
-        st.info("Connect via sidebar first")
-        return
-    
-    # Progress bar
-    progress = st.session_state.restore_step / len(RESTORE_STEPS)
-    st.progress(progress)
-    st.caption(f"Step {st.session_state.restore_step + 1} of {len(RESTORE_STEPS)}: {RESTORE_STEPS[st.session_state.restore_step]}")
-    
-    st.divider()
-    
-    # Render current step
-    if st.session_state.restore_step == 0:
-        render_restore_step_1()
-    elif st.session_state.restore_step == 1:
-        render_restore_step_2()
-    elif st.session_state.restore_step == 2:
-        render_restore_step_3()
-    elif st.session_state.restore_step == 3:
-        render_restore_step_4()
-    elif st.session_state.restore_step == 4:
-        render_restore_step_5()
 
-def render_restore_step_1() -> None:
-    """Step 1: Select domain."""
-    st.subheader("Select Package/Domain")
-    
+    if not st.session_state.connected:
+        st.info("Connect via the sidebar first.")
+        return
+
+    step = st.session_state.restore_step
+    progress = (step + 1) / len(RESTORE_STEPS)
+    st.progress(progress)
+    st.caption(f"Step {step + 1} of {len(RESTORE_STEPS)}: {RESTORE_STEPS[step]}")
+    st.divider()
+
+    if step == 0:
+        restore_step_1()
+    elif step == 1:
+        restore_step_2()
+    elif step == 2:
+        restore_step_3()
+    elif step == 3:
+        restore_step_4()
+    elif step == 4:
+        restore_step_5()
+
+
+def restore_step_1() -> None:
+    st.subheader("Select Package / Domain")
+
     if st.session_state.api_type == "20i":
         if not st.session_state.domain_choices:
-            st.warning("No packages found")
+            st.warning("No 20i packages/domains found.")
             return
-        
-        # Find the index of the currently selected domain, or default to the first one
-        try:
-            default_index = next(i for i, d in enumerate(st.session_state.domain_choices) if d["domain"] == st.session_state.selected_domain)
-        except StopIteration:
-            default_index = 0
-        
-        idx = st.selectbox(
-            "Select Site",
-            range(len(st.session_state.domain_choices)),
-            format_func=lambda i: st.session_state.domain_choices[i]["label"],
-            index=default_index
-        )
+
+        labels = [d["label"] for d in st.session_state.domain_choices]
+        default_idx = 0
+        if st.session_state.selected_domain:
+            for i, d in enumerate(st.session_state.domain_choices):
+                if d["domain"] == st.session_state.selected_domain:
+                    default_idx = i
+                    break
+
+        idx = st.selectbox("Select Site", range(len(labels)), format_func=lambda i: labels[i], index=default_idx)
         selected = st.session_state.domain_choices[idx]
         st.session_state.selected_package = selected
         st.session_state.selected_domain = selected["domain"]
     else:
         if not st.session_state.all_domains:
-            st.warning("No domains found")
+            st.warning("No cPanel domains found.")
             return
-        
-        domain = st.selectbox("Select Domain", st.session_state.all_domains, index=st.session_state.all_domains.index(st.session_state.selected_domain) if st.session_state.selected_domain in st.session_state.all_domains else 0)
+        default_idx = (
+            st.session_state.all_domains.index(st.session_state.selected_domain)
+            if st.session_state.selected_domain in st.session_state.all_domains
+            else 0
+        )
+        domain = st.selectbox(
+            "Select Domain",
+            st.session_state.all_domains,
+            index=default_idx,
+        )
         st.session_state.selected_domain = domain
-    
-    st.info(f"Selected: {st.session_state.selected_domain}")
-    
+
+    st.info(f"Selected: {st.session_state.selected_domain or 'None'}")
+
     if st.button("Next", use_container_width=True):
         st.session_state.restore_step = 1
-        st.rerun()
+        st.experimental_rerun()
 
-def render_restore_step_2() -> None:
-    """Step 2: Upload backup."""
-    st.subheader("Upload WordPress Backup")
-    
+
+def restore_step_2() -> None:
+    st.subheader("Upload WordPress Backup ZIP")
+
     uploaded = st.file_uploader("Upload ZIP file", type="zip")
-    
     if uploaded:
         st.session_state.upload_filename = uploaded.name
         st.session_state.uploaded_zip = BytesIO(uploaded.read())
-        
-        # Validate ZIP
+
         try:
             with zipfile.ZipFile(st.session_state.uploaded_zip) as zf:
                 files = zf.namelist()
-                st.success(f"Valid ZIP: {len(files)} files")
-                
-                # Check for WordPress files
-                wp_files = [f for f in files if 'wp-config.php' in f or f.startswith('wp-')]
+                st.success(f"Valid ZIP: {len(files)} files.")
+                wp_files = [
+                    f
+                    for f in files
+                    if "wp-config.php" in f or f.startswith("wp-")
+                ]
                 if wp_files:
-                    st.info(f"Found {len(wp_files)} WordPress files")
-        except:
-            st.error("Invalid ZIP file")
+                    st.info(f"Detected {len(wp_files)} WordPress-related files.")
+        except Exception:
+            st.error("Invalid ZIP file.")
             return
-    
+
     col1, col2 = st.columns(2)
-    
     with col1:
         if st.button("Back", use_container_width=True):
             st.session_state.restore_step = 0
-            st.rerun()
-    
+            st.experimental_rerun()
     with col2:
-        if (uploaded or st.session_state.uploaded_zip) and st.button("Next", use_container_width=True):
+        if (uploaded or st.session_state.uploaded_zip) and st.button(
+            "Next", use_container_width=True
+        ):
             st.session_state.restore_step = 2
-            st.rerun()
+            st.experimental_rerun()
 
-def render_restore_step_3() -> None:
-    """Step 3: Document root."""
+
+def restore_step_3() -> None:
     st.subheader("Document Root Path")
-    
-    domain = st.session_state.selected_domain
+
+    domain = st.session_state.selected_domain or "example.com"
     default_path = DEFAULT_DOCROOT_TEMPLATE.format(domain=domain)
-    
-    docroot = st.text_input("Document Root", value=st.session_state.docroot or default_path)
-    st.session_state.docroot = docroot
-    
-    st.info(f"Files will be extracted to: {docroot}")
-    
+    st.session_state.docroot = st.text_input(
+        "Document Root",
+        value=st.session_state.docroot or default_path,
+    )
+    st.info(f"Files will be extracted to: {st.session_state.docroot}")
+
     col1, col2 = st.columns(2)
-    
     with col1:
         if st.button("Back", use_container_width=True):
             st.session_state.restore_step = 1
-            st.rerun()
-    
+            st.experimental_rerun()
     with col2:
         if st.button("Next", use_container_width=True):
             st.session_state.restore_step = 3
-            st.rerun()
+            st.experimental_rerun()
 
-def render_restore_step_4() -> None:
-    """Step 4: Database setup."""
-    st.subheader("Database Configuration")
-    
+
+def restore_step_4() -> None:
+    st.subheader("Database Setup")
+
     if not st.session_state.db_details:
-        domain = st.session_state.selected_domain
-        base_name = normalize_domain_name(domain.split(".")[0])
+        domain = st.session_state.selected_domain or "site"
+        base = normalize_domain_name(domain.split(".")[0])
         st.session_state.db_details = {
-            "name": f"{base_name}_wp",
-            "user": f"{base_name}_user",
+            "name": f"{base}_wp",
+            "user": f"{base}_user",
             "password": generate_strong_password(),
             "host": "localhost",
-            "created": False
+            "created": False,
         }
-    
+
     db = st.session_state.db_details
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
+
+    c1, c2 = st.columns(2)
+    with c1:
         db["name"] = st.text_input("Database Name", value=db["name"])
         db["user"] = st.text_input("Database User", value=db["user"])
-    
-    with col2:
-        db["password"] = st.text_input("Database Password", value=db["password"], type="password")
+    with c2:
+        db["password"] = st.text_input(
+            "Database Password", value=db["password"], type="password"
+        )
         db["host"] = st.text_input("Database Host", value=db["host"])
-    
+
     st.divider()
-    
-    # Auto-create database
+
     if st.button("Auto-Create Database", use_container_width=True):
         try:
             client = get_client()
-            
             if st.session_state.api_type == "20i":
                 if not st.session_state.selected_package:
-                    st.error("Please select a package/domain in Step 1.")
+                    st.error(
+                        "Select a package/domain in Step 1 before auto-creating the database."
+                    )
                     return
                 pkg_id = st.session_state.selected_package["package_id"]
                 client.create_database(pkg_id, db["name"])
@@ -910,82 +894,79 @@ def render_restore_step_4() -> None:
                 client.create_database(db["name"])
                 client.create_database_user(db["user"], db["password"])
                 client.grant_database_privileges(db["user"], db["name"])
-            
-            st.session_state.db_details["created"] = True
-            st.success("Database created successfully!")
+
+            db["created"] = True
+            st.session_state.db_details = db
+            st.success("Database and user created successfully.")
         except Exception as e:
-            st.error(f"Failed: {e}")
-    
+            st.error(f"Failed to create database: {e}")
+
     st.divider()
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
+    c1, c2 = st.columns(2)
+    with c1:
         if st.button("Back", use_container_width=True):
             st.session_state.restore_step = 2
-            st.rerun()
-    
-    with col2:
+            st.experimental_rerun()
+    with c2:
         if st.button("Next", use_container_width=True):
             st.session_state.restore_step = 4
-            st.rerun()
+            st.experimental_rerun()
 
-def render_restore_step_5() -> None:
-    """Step 5: Restore plan with instructions."""
-    st.subheader("Complete Restore Plan")
-    
-    domain = st.session_state.selected_domain
+
+def restore_step_5() -> None:
+    st.subheader("Restore Plan & Commands")
+
+    domain = st.session_state.selected_domain or "example.com"
     docroot = st.session_state.docroot
     filename = st.session_state.upload_filename
     db = st.session_state.db_details
-    
-    # Create tabs for different instruction formats
-    tab1, tab2, tab3 = st.tabs(["Manual Steps", "Automated Script", "Verification"])
-    
-    with tab1:
-        st.markdown("### Step-by-Step Manual Instructions")
-        
-        st.markdown("#### 1. Upload & Extract Files")
-        st.code(f"""# Upload {filename} to your server via SFTP/FTP
-# Then SSH to your server and run:
 
+    tab1, tab2, tab3 = st.tabs(["Manual Steps", "Automation Script", "Checklist"])
+
+    with tab1:
+        st.markdown("### 1. Upload & Extract Files")
+        st.code(
+            f"""# Upload {filename} to your server (SFTP/FTP) under {docroot}
 cd {docroot}
 unzip {filename}
 rm {filename}
-""", language="bash")
-        
-        st.markdown("#### 2. Set Permissions")
-        st.code("""find . -type d -exec chmod 755 {} \\;
+""",
+            language="bash",
+        )
+
+        st.markdown("### 2. Secure Permissions")
+        st.code(
+            """find . -type d -exec chmod 755 {} \\;
 find . -type f -exec chmod 644 {} \\;
-chmod 600 wp-config.php""", language="bash")
-        
-        st.markdown("#### 3. Update wp-config.php")
-        config_patch = f"""define('DB_NAME', '{db["name"]}');
+[ -f wp-config.php ] && chmod 600 wp-config.php
+""",
+            language="bash",
+        )
+
+        st.markdown("### 3. Update wp-config.php")
+        st.code(
+            f"""define('DB_NAME', '{db["name"]}');
 define('DB_USER', '{db["user"]}');
 define('DB_PASSWORD', '{db["password"]}');
-define('DB_HOST', '{db["host"]}');"""
-        st.code(config_patch, language="php")
-        
-        st.markdown("#### 4. Import Database")
-        st.code(f"""# Find your .sql file and import it:
-mysql -u {db["user"]} -p'{db["password"]}' {db["name"]} < backup.sql
+define('DB_HOST', '{db["host"]}');
+""",
+            language="php",
+        )
 
-# Update site URLs:
+        st.markdown("### 4. Import Database & Fix URLs")
+        st.code(
+            f"""mysql -u {db["user"]} -p'{db["password"]}' {db["name"]} < backup.sql
+
 mysql -u {db["user"]} -p'{db["password"]}' {db["name"]} << EOF
-UPDATE wp_options SET option_value = 'https://{domain}' WHERE option_name IN ('siteurl', 'home');
-EOF""", language="bash")
-        
-        st.markdown("#### 5. Final Checks")
-        st.info(f"""
-        - Visit https://{domain}
-        - Login to /wp-admin
-        - Update permalinks
-        - Clear cache
-        """)
-    
+UPDATE wp_options SET option_value = 'https://{domain}'
+  WHERE option_name IN ('siteurl', 'home');
+EOF
+""",
+            language="bash",
+        )
+
     with tab2:
-        st.markdown("### Automated Restore Script")
-        
+        st.markdown("### Single Restore Script")
         script = f"""#!/bin/bash
 set -e
 
@@ -997,565 +978,707 @@ DB_USER="{db['user']}"
 DB_PASS="{db['password']}"
 DB_HOST="{db['host']}"
 
-echo "Starting WordPress restore for $DOMAIN"
-
-# Extract files
 cd "$DOCROOT"
 unzip -q "$BACKUP_ZIP"
 rm "$BACKUP_ZIP"
 
-# Set permissions
 find . -type d -exec chmod 755 {{}} \\;
 find . -type f -exec chmod 644 {{}} \\;
-chmod 600 wp-config.php 2>/dev/null || true
+[ -f wp-config.php ] && chmod 600 wp-config.php
 
-# Update wp-config.php
-# Note: This assumes the wp-config.php file already exists and contains the DB constants
-sed -i "s/define('DB_NAME',.*/define('DB_NAME', '$DB_NAME');/" wp-config.php
-sed -i "s/define('DB_USER',.*/define('DB_USER', '$DB_USER');/" wp-config.php
-sed -i "s/define('DB_PASSWORD',.*/define('DB_PASSWORD', '$DB_PASS');/" wp-config.php
-sed -i "s/define('DB_HOST',.*/define('DB_HOST', '$DB_HOST');/" wp-config.php
+sed -i "s/define('DB_NAME'.*/define('DB_NAME', '$DB_NAME');/" wp-config.php || true
+sed -i "s/define('DB_USER'.*/define('DB_USER', '$DB_USER');/" wp-config.php || true
+sed -i "s/define('DB_PASSWORD'.*/define('DB_PASSWORD', '$DB_PASS');/" wp-config.php || true
+sed -i "s/define('DB_HOST'.*/define('DB_HOST', '$DB_HOST');/" wp-config.php || true
 
-# Import database
-SQL_FILE=$(find . -name "*.sql" -type f | head -n 1)
+SQL_FILE=$(find . -maxdepth 2 -name "*.sql" -type f | head -n 1)
 if [ -n "$SQL_FILE" ]; then
-    mysql -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$SQL_FILE"
-    echo "Database imported: $SQL_FILE"
+  mysql -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" < "$SQL_FILE"
 fi
 
-# Update URLs
 mysql -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" <<EOF
-UPDATE wp_options SET option_value = 'https://$DOMAIN' WHERE option_name IN ('siteurl', 'home');
+UPDATE wp_options SET option_value = 'https://$DOMAIN'
+  WHERE option_name IN ('siteurl', 'home');
 EOF
 
-echo "Restore complete! Visit: https://$DOMAIN"
+echo "Restore complete: https://$DOMAIN"
 """
         st.code(script, language="bash")
-        
         st.download_button(
             "Download Script",
             data=script,
             file_name=f"restore_{domain.replace('.', '_')}.sh",
             mime="text/x-shellscript",
-            use_container_width=True
+            use_container_width=True,
         )
-    
+
     with tab3:
-        st.markdown("### Post-Restore Verification")
-        
+        st.markdown("### Post-Restore Checklist")
         checks = [
-            f"Site loads: https://{domain}",
-            "WordPress admin accessible",
-            "All pages/posts visible",
-            "Images loading correctly",
-            "Plugins active",
-            "Theme displaying properly",
-            "Permalinks working",
-            "Forms functional",
-            "SSL certificate valid",
-            "No PHP errors"
+            "Homepage loads without fatal errors",
+            "Admin login (/wp-admin) works",
+            "Permalinks work (no 404s)",
+            "Media library shows images",
+            "Contact forms send emails",
+            "SSL is valid / no mixed content",
         ]
-        
-        for check in checks:
-            st.checkbox(check, key=f"check_{hash(check)}")
-    
+        for c in checks:
+            st.checkbox(c, key=f"restore_check_{hash(c)}")
+
     st.divider()
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
+    c1, c2 = st.columns(2)
+    with c1:
         if st.button("Back", use_container_width=True):
             st.session_state.restore_step = 3
-            st.rerun()
-    
-    with col2:
+            st.experimental_rerun()
+    with c2:
         if st.button("Start Over", use_container_width=True):
             st.session_state.restore_step = 0
             st.session_state.uploaded_zip = None
             st.session_state.db_details = {}
-            st.rerun()
+            st.experimental_rerun()
 
 
 # =========================================================
-# Tab 3: Backup Manager
+# Tab: Backup Manager
 # =========================================================
 def render_backup_manager_tab() -> None:
-    """Comprehensive backup management."""
     st.header("Backup Manager")
-    
+
     if not st.session_state.connected:
-        st.info("Connect via sidebar first")
+        st.info("Connect via the sidebar first.")
         return
-    
-    st.subheader("Create New Backup")
-    
-    col1, col2, col3 = st.columns([2, 1, 1])
-    
-    with col1:
-        backup_name = st.text_input("Backup Name", placeholder="backup_2024_01_15")
-    
-    with col2:
+
+    c1, c2, c3 = st.columns([2, 1, 1])
+    with c1:
+        backup_name = st.text_input(
+            "Backup Name",
+            placeholder="backup_YYYY_MM_DD",
+        )
+    with c2:
         if st.button("Create Backup", use_container_width=True):
             try:
                 client = get_client()
-                
                 if st.session_state.api_type == "20i":
                     if not st.session_state.selected_package:
-                        st.error("Please select a package/domain in the Restore tab first.")
+                        st.error(
+                            "For 20i, select a package/domain in the Restore wizard first."
+                        )
                         return
                     pkg_id = st.session_state.selected_package["package_id"]
-                    result = client.create_backup(pkg_id, backup_name)
+                    client.create_backup(pkg_id, backup_name or "manual_backup")
                 else:
-                    result = client.create_backup()
-                
-                st.success("Backup created successfully!")
+                    client.create_backup()
+                st.success("Backup creation triggered successfully.")
             except Exception as e:
-                st.error(f"Failed: {e}")
-    
-    with col3:
+                st.error(f"Failed to create backup: {e}")
+    with c3:
         if st.button("Refresh List", use_container_width=True):
-            st.rerun()
-    
+            st.experimental_rerun()
+
     st.divider()
-    
-    # List existing backups
-    st.subheader("Available Backups")
-    
+    st.subheader("Existing Backups")
+
     try:
         client = get_client()
-        backups = []
-        
+        backups: List[Any] = []
+        pkg_id = None
         if st.session_state.api_type == "20i":
             if st.session_state.selected_package:
                 pkg_id = st.session_state.selected_package["package_id"]
-                backups = client.list_backups(pkg_id).get("backups", [])
+                resp = client.list_backups(pkg_id)
+                backups = resp.get("backups", [])
         else:
             backups = client.list_backups()
-        
-        st.session_state["backup_list"] = backups # Update session state for dashboard
-        
+
+        st.session_state.backup_list = backups
+
         if not backups:
-            st.info("No backups found")
-        else:
-            for backup in backups:
-                with st.expander(f"Backup: {backup.get('name', 'Unknown')}"):
-                    col_info, col_actions = st.columns([2, 1])
-                    
-                    with col_info:
-                        st.write(f"**Created:** {format_timestamp(backup.get('created_at'))}")
-                        st.write(f"**Size:** {format_file_size(backup.get('size', 0))}")
-                        st.write(f"**Status:** {backup.get('status', 'Unknown')}")
-                    
-                    with col_actions:
-                        backup_id = backup.get('id')
-                        
-                        if st.session_state.api_type == "20i":
-                            if st.button("Download", key=f"dl_{backup_id}"):
-                                try:
-                                    data = client.download_backup(pkg_id, backup_id)
-                                    st.download_button(
-                                        "Save File",
-                                        data=data,
-                                        file_name=f"{backup.get('name')}.zip",
-                                        mime="application/zip"
-                                    )
-                                except Exception as e:
-                                    st.error(f"Download failed: {e}")
-                            
-                            if st.button("Restore", key=f"restore_{backup_id}"):
-                                try:
-                                    client.restore_backup(pkg_id, backup_id)
-                                    st.success("Restore initiated!")
-                                except Exception as e:
-                                    st.error(f"Restore failed: {e}")
-                        else:
-                            st.info("cPanel backup download/restore must be done manually.")
-    
+            st.info("No backups found.")
+            return
+
+        for b in backups:
+            name = b.get("name", "backup")
+            with st.expander(name):
+                col_i, col_a = st.columns([2, 1])
+                with col_i:
+                    st.write(f"**Name:** {name}")
+                    st.write(f"**Status:** {b.get('status', 'Unknown')}")
+                    st.write(
+                        f"**Created:** {format_timestamp(b.get('created_at') or b.get('created'))}"
+                    )
+                    if "size" in b:
+                        st.write(f"**Size:** {format_file_size(b.get('size', 0))}")
+                with col_a:
+                    if st.session_state.api_type == "20i" and pkg_id:
+                        bid = b.get("id")
+                        if st.button("Restore", key=f"restore_{bid}"):
+                            try:
+                                client.restore_backup(pkg_id, bid)
+                                st.success("Restore initiated.")
+                            except Exception as e:
+                                st.error(f"Restore failed: {e}")
     except Exception as e:
-        st.error(f"Failed to load backups: {e}")
+        st.error(f"Failed to fetch backups: {e}")
+
 
 # =========================================================
-# Tab 4: File Editor
+# Tab: File Editor (cPanel only)
 # =========================================================
 def render_file_editor_tab() -> None:
-    """File browser and editor with syntax highlighting."""
     st.header("File Editor")
-    
+
     if not st.session_state.connected:
-        st.info("Connect via sidebar first")
-        return
-    
-    if st.session_state.api_type == "20i":
-        st.warning("File editing is not directly supported by the 20i API. Please use the official control panel or FTP.")
+        st.info("Connect via the sidebar first.")
         return
 
-    col_browser, col_editor = st.columns([1, 2])
-    
-    with col_browser:
-        st.subheader("File Browser")
-        
-        # Directory navigation
-        current_dir = st.text_input("Directory", value=st.session_state.current_directory)
+    if st.session_state.api_type == "20i":
+        st.warning(
+            "20i REST API does not expose a file manager. Use SFTP / control panel for file edits."
+        )
+        return
+
+    client = get_client()
+    col_b, col_e = st.columns([1, 2])
+
+    with col_b:
+        st.subheader("Browser")
+        current_dir = st.text_input(
+            "Directory", value=st.session_state.current_directory
+        )
         st.session_state.current_directory = current_dir
-        
+
         if st.button("List Files", use_container_width=True):
             try:
-                client = get_client()
                 st.session_state.file_list = client.list_files(current_dir)
             except Exception as e:
-                st.error(f"Failed: {e}")
-        
-        # Display files
-        if st.session_state.file_list:
-            for file in st.session_state.file_list:
-                file_name = file.get("file", file.get("name", ""))
-                file_type = file.get("type", "file")
-                
-                icon = "📁" if file_type == "dir" else "📄"
-                
-                if st.button(f"{icon} {file_name}", key=f"file_{hash(file_name)}", use_container_width=True):
-                    if file_type == "file":
-                        st.session_state.selected_file = f"{current_dir}/{file_name}"
-                        try:
-                            client = get_client()
-                            st.session_state.file_content = client.read_file(st.session_state.selected_file)
-                        except Exception as e:
-                            st.error(f"Failed to read: {e}")
-                    elif file_type == "dir":
-                        st.session_state.current_directory = f"{current_dir}/{file_name}".replace("//", "/")
-                        st.rerun()
-    
-    with col_editor:
-        st.subheader("Editor")
-        
-        if st.session_state.selected_file:
-            st.caption(f"Editing: {st.session_state.selected_file}")
-            
-            # Get file syntax
-            syntax = get_file_syntax(st.session_state.selected_file)
-            
-            # Editor
-            edited_content = st.text_area(
-                "Content",
-                value=st.session_state.file_content,
-                height=400,
-                key="file_editor"
-            )
-            
-            # Action buttons
-            col_save, col_download, col_close = st.columns(3)
-            
-            with col_save:
-                if st.button("Save", use_container_width=True):
+                st.error(f"Failed to list files: {e}")
+
+        for f in st.session_state.file_list:
+            name = f.get("file", f.get("name", ""))
+            ftype = f.get("type", "file")
+            icon = "📁" if ftype == "dir" else "📄"
+            if st.button(f"{icon} {name}", key=f"f_{hash(current_dir + name)}"):
+                if ftype == "dir":
+                    st.session_state.current_directory = (
+                        current_dir.rstrip("/") + "/" + name
+                    )
+                    st.experimental_rerun()
+                else:
+                    path = current_dir.rstrip("/") + "/" + name
+                    st.session_state.selected_file = path
                     try:
-                        client = get_client()
-                        client.write_file(st.session_state.selected_file, edited_content)
-                        st.success("File saved!")
-                        st.session_state.file_content = edited_content # Update content after save
+                        st.session_state.file_content = client.read_file(path)
                     except Exception as e:
-                        st.error(f"Save failed: {e}")
-            
-            with col_download:
-                st.download_button(
-                    "Download",
-                    data=edited_content,
-                    file_name=Path(st.session_state.selected_file).name,
-                    mime="text/plain",
-                    use_container_width=True
-                )
-            
-            with col_close:
-                if st.button("Close", use_container_width=True):
-                    st.session_state.selected_file = None
-                    st.session_state.file_content = ""
-                    st.rerun()
-            
-            # wp-config.php helper
-            if "wp-config.php" in st.session_state.selected_file:
-                st.divider()
-                st.subheader("wp-config.php Helper")
-                
-                extracted = extract_wp_config_values(edited_content)
-                if extracted:
-                    st.json(extracted)
-        else:
-            st.info("Select a file from the browser")
+                        st.error(f"Failed to read file: {e}")
+
+    with col_e:
+        st.subheader("Editor")
+        if not st.session_state.selected_file:
+            st.info("Select a file from the browser.")
+            return
+
+        st.caption(f"Editing: {st.session_state.selected_file}")
+        content = st.text_area(
+            "Content",
+            value=st.session_state.file_content,
+            height=420,
+            key="editor_content",
+        )
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("Save", use_container_width=True):
+                try:
+                    client.write_file(st.session_state.selected_file, content)
+                    st.session_state.file_content = content
+                    st.success("File saved.")
+                except Exception as e:
+                    st.error(f"Save failed: {e}")
+        with c2:
+            st.download_button(
+                "Download",
+                data=content,
+                file_name=Path(st.session_state.selected_file).name,
+                mime="text/plain",
+                use_container_width=True,
+            )
+        with c3:
+            if st.button("Close", use_container_width=True):
+                st.session_state.selected_file = None
+                st.session_state.file_content = ""
+                st.experimental_rerun()
+
+        if "wp-config.php" in st.session_state.selected_file:
+            st.markdown("#### wp-config.php Helper")
+            extracted = extract_wp_config_values(content)
+            if extracted:
+                st.json(extracted)
+
 
 # =========================================================
-# Tab 5: Database Manager
+# Tab: Database Manager
 # =========================================================
 def render_database_manager_tab() -> None:
-    """Database management interface."""
     st.header("Database Manager")
-    
+
     if not st.session_state.connected:
-        st.info("Connect via sidebar first")
+        st.info("Connect via the sidebar first.")
         return
-    
-    # Database list
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        if st.button("Refresh Database List", use_container_width=True):
+
+    client = get_client()
+
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        if st.button("Refresh Databases", use_container_width=True):
             try:
-                client = get_client()
-                
                 if st.session_state.api_type == "20i":
                     if not st.session_state.selected_package:
-                        st.error("Please select a package/domain in the Restore tab first.")
+                        st.error(
+                            "For 20i, select a package/domain in the Restore wizard first."
+                        )
                         return
                     pkg_id = st.session_state.selected_package["package_id"]
-                    result = client.list_databases(pkg_id)
-                    st.session_state.db_list = result.get("databases", [])
+                    res = client.list_databases(pkg_id)
+                    st.session_state.db_list = res.get("databases", [])
                 else:
                     st.session_state.db_list = client.list_databases()
-                
-                st.success("Database list refreshed")
+                st.success("Database list refreshed.")
             except Exception as e:
-                st.error(f"Failed: {e}")
-    
-    with col2:
+                st.error(f"Failed to list databases: {e}")
+    with c2:
         new_db = st.text_input("New DB Name")
         if st.button("Create", use_container_width=True) and new_db:
             try:
-                client = get_client()
-                
                 if st.session_state.api_type == "20i":
                     if not st.session_state.selected_package:
-                        st.error("Please select a package/domain in the Restore tab first.")
+                        st.error(
+                            "For 20i, select a package/domain in the Restore wizard first."
+                        )
                         return
                     pkg_id = st.session_state.selected_package["package_id"]
                     client.create_database(pkg_id, new_db)
                 else:
                     client.create_database(new_db)
-                
-                st.success(f"Database '{new_db}' created")
-                st.rerun() # Refresh list
+                st.success(f"Database '{new_db}' created.")
+                st.experimental_rerun()
             except Exception as e:
-                st.error(f"Failed: {e}")
-    
+                st.error(f"Failed to create DB: {e}")
+
     st.divider()
-    
-    # Display databases
-    if st.session_state.db_list:
-        st.subheader("Databases")
-        
-        for db in st.session_state.db_list:
-            db_name = db if isinstance(db, str) else db.get("name", "Unknown")
-            
-            with st.expander(f"Database: {db_name}"):
-                col_info, col_delete = st.columns([3, 1])
-                
-                with col_info:
-                    st.write(f"**Name:** {db_name}")
-                    if isinstance(db, dict):
-                        st.write(f"**Size:** {format_file_size(db.get('size', 0))}")
-                
-                with col_delete:
-                    if st.button("Delete", key=f"del_db_{db_name}"):
-                        try:
-                            client = get_client()
-                            
-                            if st.session_state.api_type == "20i":
-                                if not st.session_state.selected_package:
-                                    st.error("Please select a package/domain in the Restore tab first.")
-                                    return
-                                pkg_id = st.session_state.selected_package["package_id"]
-                                client.delete_database(pkg_id, db_name)
-                            else:
-                                client.delete_database(db_name)
-                            
-                            st.success(f"Deleted {db_name}")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Failed: {e}")
-    else:
-        st.info("No databases found")
+
+    if not st.session_state.db_list:
+        st.info("No databases loaded yet. Click 'Refresh Databases'.")
+        return
+
+    for db in st.session_state.db_list:
+        name = db if isinstance(db, str) else db.get("name", "Unknown")
+        with st.expander(f"DB: {name}"):
+            col_i, col_a = st.columns([3, 1])
+            with col_i:
+                st.write(f"**Name:** {name}")
+                if isinstance(db, dict) and "size" in db:
+                    st.write(f"**Size:** {format_file_size(db['size'])}")
+            with col_a:
+                if st.button("Delete", key=f"del_{name}"):
+                    try:
+                        if st.session_state.api_type == "20i":
+                            if not st.session_state.selected_package:
+                                st.error(
+                                    "For 20i, select a package/domain in the Restore wizard first."
+                                )
+                                return
+                            pkg_id = st.session_state.selected_package["package_id"]
+                            client.delete_database(pkg_id, name)
+                        else:
+                            client.delete_database(name)
+                        st.success(f"Database '{name}' deleted.")
+                        st.experimental_rerun()
+                    except Exception as e:
+                        st.error(f"Delete failed: {e}")
+
 
 # =========================================================
-# Placeholder tabs (6-19)
+# Tab: Domain Manager
 # =========================================================
 def render_domain_manager_tab() -> None:
     st.header("Domain Manager")
-    st.info("Domain management features coming soon")
 
+    if not st.session_state.connected:
+        st.info("Connect via the sidebar first.")
+        return
+
+    client = get_client()
+
+    if st.session_state.api_type == "20i":
+        if not st.session_state.packages_raw:
+            st.info("Fetch packages from the 20i connection first.")
+            return
+
+        st.subheader("Domains by Package")
+        for pkg in st.session_state.packages_raw.get("packages", []):
+            if not isinstance(pkg, dict):
+                continue
+            label = pkg.get("label") or f"Package {pkg.get('id')}"
+            with st.expander(label):
+                for d in pkg.get("names", []):
+                    st.write(f"- {d}")
+
+        st.divider()
+        st.subheader("Add Domain to Package")
+        if not st.session_state.domain_choices:
+            st.warning("No packages available.")
+            return
+        pkg_idx = st.selectbox(
+            "Select Package",
+            range(len(st.session_state.domain_choices)),
+            format_func=lambda i: st.session_state.domain_choices[i]["package_label"]
+            + " ("
+            + st.session_state.domain_choices[i]["domain"]
+            + ")",
+        )
+        new_domain = st.text_input("New Domain (example.com)")
+        docroot = st.text_input(
+            "Document Root (optional)",
+            placeholder="/home/stackcp/example.com/public_html",
+        )
+        if st.button("Add Domain", use_container_width=True):
+            if not new_domain:
+                st.error("Enter a domain name.")
+            else:
+                try:
+                    pkg = st.session_state.domain_choices[pkg_idx]
+                    client.add_domain_to_package(
+                        pkg["package_id"], new_domain.strip(), docroot.strip()
+                    )
+                    st.success("Domain added. Refresh packages to see it.")
+                except Exception as e:
+                    st.error(f"Failed to add domain: {e}")
+
+    else:
+        st.subheader("Existing Domains (cPanel)")
+        domains = st.session_state.all_domains or client.list_domains()
+        st.session_state.all_domains = domains
+        if not domains:
+            st.info("No domains found.")
+        else:
+            for d in domains:
+                st.write(f"- {d}")
+
+        st.divider()
+        st.subheader("Add Addon Domain")
+        new_domain = st.text_input("New Domain")
+        subdomain = st.text_input("Subdomain", help="e.g. example or client1")
+        docroot = st.text_input("Document Root", value="public_html/newsite")
+        if st.button("Add Addon Domain", use_container_width=True):
+            try:
+                client.add_addon_domain(new_domain, subdomain, docroot)
+                st.success("Addon domain added.")
+            except Exception as e:
+                st.error(f"Failed: {e}")
+
+
+# =========================================================
+# Tab: SSL Manager
+# =========================================================
 def render_ssl_manager_tab() -> None:
     st.header("SSL Manager")
-    st.info("SSL management features coming soon")
 
+    if not st.session_state.connected:
+        st.info("Connect via the sidebar first.")
+        return
+
+    client = get_client()
+
+    if st.session_state.api_type == "20i":
+        if not st.session_state.selected_package:
+            st.info("Select a package/domain in the Restore wizard first.")
+            return
+        pkg_id = st.session_state.selected_package["package_id"]
+        try:
+            certs = client.list_ssl_certificates(pkg_id).get("certs", [])
+        except Exception as e:
+            st.error(f"Failed to list SSL certs: {e}")
+            return
+
+        st.subheader("Existing Certificates")
+        if not certs:
+            st.info("No certificates found.")
+        else:
+            for c in certs:
+                with st.expander(c.get("domain", "Unknown")):
+                    st.write(f"**Domain:** {c.get('domain')}")
+                    st.write(f"**Status:** {c.get('status', 'Unknown')}")
+                    st.write(
+                        f"**Expiry:** {format_timestamp(c.get('expires') or c.get('expiry'))}"
+                    )
+
+        st.divider()
+        st.subheader("Install Free SSL")
+        domain = st.text_input("Domain for Free SSL", value=st.session_state.selected_domain)
+        if st.button("Install Free SSL", use_container_width=True):
+            try:
+                client.install_free_ssl(pkg_id, domain)
+                st.success("Free SSL installation initiated.")
+            except Exception as e:
+                st.error(f"Failed: {e}")
+
+    else:
+        st.subheader("Existing Certificates (cPanel)")
+        try:
+            certs = client.list_ssl_certificates()
+        except Exception as e:
+            st.error(f"Failed to list certs: {e}")
+            return
+        if not certs:
+            st.info("No certificates found.")
+        else:
+            for c in certs:
+                with st.expander(c.get("domains", ["Unknown"])[0]):
+                    st.json(c)
+
+        st.divider()
+        st.subheader("Install SSL Certificate")
+        domain = st.text_input("Domain")
+        cert = st.text_area("Certificate (CRT)")
+        key = st.text_area("Private Key")
+        cab = st.text_area("(Optional) CA Bundle")
+        if st.button("Install SSL", use_container_width=True):
+            try:
+                client.install_ssl_certificate(domain, cert, key, cab)
+                st.success("SSL installation requested.")
+            except Exception as e:
+                st.error(f"Failed: {e}")
+
+
+# =========================================================
+# Tab: Email Manager
+# =========================================================
 def render_email_manager_tab() -> None:
     st.header("Email Manager")
-    st.info("Email management features coming soon")
 
-def render_plugin_manager_tab() -> None:
-    st.header("Plugin Manager")
-    st.info("WordPress plugin management coming soon")
+    if not st.session_state.connected:
+        st.info("Connect via the sidebar first.")
+        return
 
-def render_theme_manager_tab() -> None:
-    st.header("Theme Manager")
-    st.info("WordPress theme management coming soon")
+    client = get_client()
 
-def render_user_manager_tab() -> None:
-    st.header("User Manager")
-    st.info("WordPress user management coming soon")
+    if st.session_state.api_type == "20i":
+        if not st.session_state.selected_package:
+            st.info("Select a package/domain in the Restore wizard first.")
+            return
+        pkg_id = st.session_state.selected_package["package_id"]
+        try:
+            emails = client.list_email_accounts(pkg_id).get("emails", [])
+        except Exception as e:
+            st.error(f"Failed to list accounts: {e}")
+            return
+    else:
+        try:
+            emails = client.list_email_accounts()
+        except Exception as e:
+            st.error(f"Failed to list accounts: {e}")
+            return
 
-def render_wpcli_tools_tab() -> None:
-    st.header("WP-CLI Tools")
-    st.info("WP-CLI command interface coming soon")
+    st.subheader("Existing Accounts")
+    if not emails:
+        st.info("No email accounts found.")
+    else:
+        for acc in emails:
+            with st.expander(acc.get("email") or acc.get("user", "account")):
+                st.json(acc)
 
+    st.divider()
+    st.subheader("Create New Account")
+
+    email = st.text_input("Email", placeholder="user@example.com")
+    password = st.text_input("Password", type="password", value=generate_strong_password())
+    quota = st.number_input("Quota (MB)", value=1000, min_value=50, step=50)
+
+    if st.button("Create Email", use_container_width=True):
+        try:
+            if st.session_state.api_type == "20i":
+                client.create_email_account(
+                    st.session_state.selected_package["package_id"],
+                    email,
+                    password,
+                    quota_mb=int(quota),
+                )
+            else:
+                client.create_email_account(email, password, int(quota))
+            st.success("Email account created.")
+        except Exception as e:
+            st.error(f"Failed to create email: {e}")
+
+
+# =========================================================
+# Tab: Security Scanner
+# =========================================================
 def render_security_scanner_tab() -> None:
     st.header("Security Scanner")
-    st.info("Security scanning features coming soon")
 
+    st.info("Upload individual files or a ZIP of your WordPress site for a quick pattern-based scan.")
+
+    uploaded = st.file_uploader("Upload file or ZIP", type=["zip", "php", "txt", "js"])
+    issues: List[Dict[str, Any]] = []
+
+    if uploaded and st.button("Run Scan", use_container_width=True):
+        if uploaded.name.lower().endswith(".zip"):
+            try:
+                with zipfile.ZipFile(BytesIO(uploaded.read())) as zf:
+                    for name in zf.namelist():
+                        if name.endswith("/"):
+                            continue
+                        try:
+                            content = zf.read(name).decode(errors="ignore")
+                        except Exception:
+                            continue
+                        issues.extend(scan_file_for_malware(content, name))
+            except Exception as e:
+                st.error(f"Failed to scan ZIP: {e}")
+        else:
+            try:
+                content = uploaded.read().decode(errors="ignore")
+                issues.extend(scan_file_for_malware(content, uploaded.name))
+            except Exception as e:
+                st.error(f"Failed to scan file: {e}")
+
+        st.session_state.scan_results = issues
+        st.session_state.last_scan = datetime.utcnow().isoformat()
+
+    if st.session_state.scan_results:
+        st.subheader("Scan Results")
+        st.caption(f"Last scan: {st.session_state.last_scan}")
+        for issue in st.session_state.scan_results:
+            st.warning(
+                f"[{issue['category']}] {issue['file']}:{issue['line']} → pattern `{issue['match']}`"
+            )
+    else:
+        st.info("No issues reported yet.")
+
+
+# =========================================================
+# Lightweight tabs (Performance, Migration, Cron, Logs, FTP, Settings)
+# =========================================================
 def render_performance_tab() -> None:
-    st.header("Performance Monitor")
-    st.info("Performance monitoring coming soon")
+    st.header("Performance")
+    st.info(
+        "Use this section as a checklist around caching, PHP version, database size and slow queries.\n\n"
+        "Host-level performance metrics are not directly exposed via 20i or cPanel APIs, "
+        "so this tab focuses on guidance and manual checks."
+    )
+
 
 def render_migration_tool_tab() -> None:
     st.header("Migration Tool")
-    st.info("Site migration features coming soon")
+    st.info("Plan migrations between hosts or packages.")
+    c1, c2 = st.columns(2)
+    with c1:
+        src_host = st.text_input("Source Host / Panel URL")
+        src_site = st.text_input("Source Domain")
+    with c2:
+        dst_host = st.text_input("Destination Host / Panel URL")
+        dst_site = st.text_input("Destination Domain")
+    notes = st.text_area("Migration Notes / Steps")
+    if st.button("Save Plan", use_container_width=True):
+        st.success("Migration plan saved locally in this session.")
+        st.json(
+            {
+                "source": {"host": src_host, "site": src_site},
+                "destination": {"host": dst_host, "site": dst_site},
+                "notes": notes,
+            }
+        )
+
 
 def render_cron_jobs_tab() -> None:
     st.header("Cron Jobs")
-    st.info("Cron job management coming soon")
+    st.info(
+        "Most hosts expose cron management via their panel UI rather than the public API.\n"
+        "Use this area as a helper for building cron expressions for WordPress tasks."
+    )
+    schedule = st.text_input("Cron Expression", value="0 2 * * *")
+    command = st.text_input(
+        "Command", value="php /home/user/public_html/wp-cron.php >/dev/null 2>&1"
+    )
+    st.code(f"{schedule} {command}", language="bash")
+
 
 def render_logs_viewer_tab() -> None:
     st.header("Logs Viewer")
-    st.info("Log viewer coming soon")
+    st.info(
+        "Web server and PHP logs are usually not exposed over 20i / cPanel public APIs.\n"
+        "Use SSH or the panel's built-in log viewers. You can paste snippets here for analysis."
+    )
+    snippet = st.text_area("Paste Log Snippet")
+    if snippet:
+        st.code(snippet, language="text")
 
-def render_ftp_sftp_tab() -> None:
-    st.header("FTP/SFTP Manager")
-    st.info("FTP/SFTP management coming soon")
+
+def render_ftp_tab() -> None:
+    st.header("FTP / SFTP")
+    st.info(
+        "For security reasons, FTP/SFTP credentials are not fetched via APIs in this tool.\n"
+        "Store and manage them in a secure password manager."
+    )
+
 
 def render_settings_tab() -> None:
     st.header("Settings")
-    st.info("Application settings coming soon")
+    st.info("Local-only settings (this app does not persist these server-side).")
+    st.checkbox("Enable debug mode", key="debug_mode")
+
 
 # =========================================================
-# Main Application
+# Main App
 # =========================================================
-def main() -> None:
-    """Main application entry point."""
+def main():
     st.set_page_config(
-        page_title="WordPress Management Pro",
+        page_title="WordPress Management Pro – Ultimate Edition",
+        page_icon="🛠️",
         layout="wide",
-        page_icon="🚀",
-        initial_sidebar_state="expanded"
     )
-    
+
     init_session_state()
-    
-    # Header
-    st.title("WordPress Management Pro")
-    st.caption("Ultimate WordPress management with 20i API & cPanel support")
-    
-    # Sidebar
-    with st.sidebar:
+
+    left, right = st.columns([1.1, 2.3])
+    with left:
         render_sidebar()
-    
-    st.divider()
-    
-    # Main tabs
-    selected_tab = st.radio(
-        "Navigation",
-        MAIN_TABS,
-        index=st.session_state.current_tab,
-        horizontal=False,
-        label_visibility="collapsed"
-    )
-    st.session_state.current_tab = MAIN_TABS.index(selected_tab)
-    
-    st.divider()
-    
-    # Render selected tab
-    tab_renderers = [
-        render_dashboard_tab,
-        render_restore_tab,
-        render_backup_manager_tab,
-        render_file_editor_tab,
-        render_database_manager_tab,
-        render_domain_manager_tab,
-        render_ssl_manager_tab,
-        render_email_manager_tab,
-        render_plugin_manager_tab,
-        render_theme_manager_tab,
-        render_user_manager_tab,
-        render_security_scanner_tab, # Corrected index to match MAIN_TABS
-        render_performance_tab,
-        render_migration_tool_tab,
-        render_cron_jobs_tab,
-        render_logs_viewer_tab,
-        render_ftp_sftp_tab,
-        render_settings_tab
-    ]
-    
-    # The original list had 19 items in MAIN_TABS but only 18 renderers.
-    # I've re-aligned the renderers to match the MAIN_TABS list (19 items total).
-    # MAIN_TABS: Dashboard, Restore, Backup Manager, File Editor, Database Manager, Domain Manager, SSL Manager, Email Manager, Plugin Manager, Theme Manager, User Manager, WP-CLI Tools, Security Scanner, Performance, Migration Tool, Cron Jobs, Logs Viewer, FTP/SFTP, Settings (19 items)
-    # The original tab_renderers list was missing a renderer for one of the placeholder tabs.
-    # I will assume the original intent was to have a placeholder for every tab.
-    # Re-checking the original list:
-    # 1431	    tab_renderers = [
-    # 1432	        render_dashboard_tab,
-    # 1433	        render_restore_tab,
-    # 1434	        render_backup_manager_tab,
-    # 1435	        render_file_editor_tab,
-    # 1436	        render_database_manager_tab,
-    # 1437	        render_domain_manager_tab,
-    # 1438	        render_ssl_manager_tab,
-    # 1439	        render_email_manager_tab,
-    # 1440	        render_plugin_manager_tab,
-    # 1441	        render_theme_manager_tab,
-    # 1442	        render_user_manager_tab,
-    # 1443	        render_wpcli_tools_tab,
-    # 1444	        render_security_scanner_tab,
-    # 1445	        render_performance_tab,
-    # 1446	        render_migration_tool_tab,
-    # 1447	        render_cron_jobs_tab,
-    # 1448	        render_logs_viewer_tab,
-    # 1449	        render_ftp_sftp_tab,
-    # 1450	        render_settings_tab
-    # 1451	    ]
-    # The original list had 19 renderers, which matches the 19 items in MAIN_TABS.
-    # My previous manual check was flawed. The original code was complete.
-    # I will use the original list of renderers.
-    
-    tab_renderers = [
-        render_dashboard_tab,
-        render_restore_tab,
-        render_backup_manager_tab,
-        render_file_editor_tab,
-        render_database_manager_tab,
-        render_domain_manager_tab,
-        render_ssl_manager_tab,
-        render_email_manager_tab,
-        render_plugin_manager_tab,
-        render_theme_manager_tab,
-        render_user_manager_tab,
-        render_wpcli_tools_tab,
-        render_security_scanner_tab,
-        render_performance_tab,
-        render_migration_tool_tab,
-        render_cron_jobs_tab,
-        render_logs_viewer_tab,
-        render_ftp_sftp_tab,
-        render_settings_tab
-    ]
-    
-    tab_renderers[st.session_state.current_tab]()
-    
-    # Footer
-    st.divider()
-    st.caption("WordPress Management Pro v3.0 | Built with Streamlit")
+    with right:
+        tab_objs = st.tabs(MAIN_TABS)
+        st.session_state.current_tab = st.session_state.current_tab or 0
+
+        with tab_objs[0]:
+            render_dashboard_tab()
+        with tab_objs[1]:
+            render_restore_tab()
+        with tab_objs[2]:
+            render_backup_manager_tab()
+        with tab_objs[3]:
+            render_file_editor_tab()
+        with tab_objs[4]:
+            render_database_manager_tab()
+        with tab_objs[5]:
+            render_domain_manager_tab()
+        with tab_objs[6]:
+            render_ssl_manager_tab()
+        with tab_objs[7]:
+            render_email_manager_tab()
+        with tab_objs[8]:
+            render_security_scanner_tab()
+        with tab_objs[9]:
+            render_performance_tab()
+        with tab_objs[10]:
+            render_migration_tool_tab()
+        with tab_objs[11]:
+            render_cron_jobs_tab()
+        with tab_objs[12]:
+            render_logs_viewer_tab()
+        with tab_objs[13]:
+            render_ftp_tab()
+        with tab_objs[14]:
+            render_settings_tab()
+
 
 if __name__ == "__main__":
-    # Ensure all necessary libraries are installed
-    try:
-        import requests
-        import streamlit as st
-    except ImportError:
-        print("Required libraries (requests, streamlit) not found. Please install them.")
-        print("Run: pip install requests streamlit")
-        exit(1)
-        
     main()
