@@ -717,7 +717,7 @@ def render_dashboard_tab() -> None:
     with qc3:
         if st.button("Security Scan", use_container_width=True):
             st.session_state.current_tab = MAIN_TABS.index("Security Scanner")
-            st.experimental_rerun()
+            st.rerun()
 
 
 # =========================================================
